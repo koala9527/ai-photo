@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 图片合成</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+        }
+        .loading-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: white;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .preview-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .preview-item {
+            position: relative;
+            aspect-ratio: 1;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .preview-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .preview-item .remove-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: rgba(0, 0, 0, 0.5);
+            color: white;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-4xl font-bold text-center mb-8 text-gray-800">AI 图片合成</h1>
+        
+        <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-6">
+            <div class="mb-6">
+                <label class="block text-gray-700 text-sm font-bold mb-2">
+                    上传图片（最多4张）
+                </label>
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                    <input type="file" id="fileInput" multiple accept="image/*" class="hidden">
+                    <button onclick="document.getElementById('fileInput').click()" 
+                            class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                        选择图片
+                    </button>
+                    <p class="mt-2 text-sm text-gray-500">支持 PNG, JPG, JPEG, GIF 格式</p>
+                </div>
+            </div>
+
+            <div id="previewContainer" class="preview-container"></div>
+
+            <div class="mt-6">
+                <label class="block text-gray-700 text-sm font-bold mb-2">
+                    自定义提示词（可选）
+                </label>
+                <textarea id="promptInput" 
+                          class="w-full px-3 py-2 text-gray-700 border rounded-lg focus:outline-none focus:border-blue-500"
+                          rows="4"
+                          placeholder="请输入自定义提示词，如果不填写将使用默认提示词"></textarea>
+            </div>
+
+            <div class="mt-6 text-center">
+                <button id="generateBtn" 
+                        class="bg-green-500 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg text-lg">
+                    开始生成
+                </button>
+            </div>
+
+            <div id="resultContainer" class="mt-8 hidden">
+                <h2 class="text-2xl font-bold mb-4 text-gray-800">生成结果</h2>
+                <div id="resultImages" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading" class="loading">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <h2 class="text-2xl font-bold mb-2">正在生成中...</h2>
+            <p class="text-gray-300">预计需要90秒，请耐心等待</p>
+            <div id="progressText" class="mt-4 text-gray-300"></div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const previewContainer = document.getElementById('previewContainer');
+        const generateBtn = document.getElementById('generateBtn');
+        const loading = document.getElementById('loading');
+        const promptInput = document.getElementById('promptInput');
+        let uploadedUrls = [];
+        document.getElementById('promptInput').value = "请画一张极其平凡无奇的iPhone 自拍照，没有明确的主体或构图感，就像是随手一拍的快照。照片略带运动模糊，阳光或店内灯光不均导致轻微曝光过度。角度尴尬、构图混乱，整体呈现出一种刻意的平庸感-就像是从口袋里拿手机时不小心拍到的一张自拍。主角是陈奕迅和谢霆锋，晚上，旁边是香港会展中心，在香港维多利亚港旁边。";
+        fileInput.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
+            if (uploadedUrls.length + files.length > 4) {
+                alert('最多只能上传4张图片');
+                return;
+            }
+
+            const formData = new FormData();
+            files.forEach(file => formData.append('images[]', file));
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (data.urls) {
+                    uploadedUrls = [...uploadedUrls, ...data.urls];
+                    updatePreview();
+                }
+            } catch (error) {
+                console.error('上传失败:', error);
+                alert('上传失败，请重试');
+            }
+        });
+
+        function updatePreview() {
+            previewContainer.innerHTML = '';
+            uploadedUrls.forEach((url, index) => {
+                const div = document.createElement('div');
+                div.className = 'preview-item';
+                div.innerHTML = `
+                    <img src="${url}" alt="预览图">
+                    <div class="remove-btn" onclick="removeImage(${index})">×</div>
+                `;
+                previewContainer.appendChild(div);
+            });
+        }
+
+        function removeImage(index) {
+            uploadedUrls.splice(index, 1);
+            updatePreview();
+        }
+
+        function parseMessageContent(content) {
+            const progressMatch = content.match(/进度\s*(\d+\.\.\.\d+\.\.\.\d+\.\.\.\d+\.\.\.\d+)/);
+            if (progressMatch) {
+                document.getElementById('progressText').textContent = `当前进度: ${progressMatch[1]}`;
+            }
+
+            const imageUrls = [];
+            const imageRegex = /!\[.*?\]\((https:\/\/filesystem\.site\/cdn\/[^)]+)\)/g;
+            let match;
+            while ((match = imageRegex.exec(content)) !== null) {
+                imageUrls.push(match[1]);
+            }
+
+            return imageUrls;
+        }
+
+        function displayResults(imageUrls) {
+            const resultContainer = document.getElementById('resultContainer');
+            const resultImages = document.getElementById('resultImages');
+            
+            resultContainer.classList.remove('hidden');
+            resultImages.innerHTML = '';
+
+            imageUrls.forEach(url => {
+                const div = document.createElement('div');
+                div.className = 'relative group';
+                div.innerHTML = `
+                    <div class="aspect-w-1 aspect-h-1 rounded-lg overflow-hidden">
+                        <img src="${url}" alt="生成结果" class="w-full h-full object-cover">
+                    </div>
+                    <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all duration-300 flex items-center justify-center">
+                        <a href="${url}" download class="opacity-0 group-hover:opacity-100 bg-white text-gray-800 px-4 py-2 rounded-lg font-semibold transition-all duration-300">
+                            下载图片
+                        </a>
+                    </div>
+                `;
+                resultImages.appendChild(div);
+            });
+        }
+
+        generateBtn.addEventListener('click', async () => {
+            loading.style.display = 'block';
+            document.getElementById('progressText').textContent = '';
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        image_urls: uploadedUrls,
+                        prompt: promptInput.value.trim()
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.choices && data.choices[0].message) {
+                    const imageUrls = parseMessageContent(data.choices[0].message.content);
+                    if (imageUrls.length > 0) {
+                        displayResults(imageUrls);
+                    } else {
+                        alert('生成失败，未获取到图片');
+                    }
+                } else {
+                    alert('生成失败，请重试');
+                }
+            } catch (error) {
+                console.error('生成失败:', error);
+                alert('生成失败，请重试');
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
