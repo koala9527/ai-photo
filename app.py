@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import render_template, request, jsonify
 import os
 from werkzeug.utils import secure_filename
 import requests
@@ -8,17 +8,15 @@ import uuid
 from datetime import datetime
 import boto3
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
+from config.database import get_db
+from app.models import WechatCode
+from app import app
 
 # 加载环境变量
 load_dotenv()
 
-app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'static/uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max-limit
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
-
-# 确保上传目录存在
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -83,58 +81,107 @@ def upload_file():
     return jsonify({'urls': uploaded_urls})
 
 @app.route('/generate', methods=['POST'])
-def generate_image():
-    data = request.json
+def generate():
+    data = request.get_json()
+    activation_code = data.get('activation_code')
     image_urls = data.get('image_urls', [])
-    custom_prompt = data.get('prompt', '')
-    
-    # 默认提示词
-    default_prompt = "请画一张极其平凡无奇的iPhone 自拍照，没有明确的主体或构图感，就像是随手一拍的快照。照片略带运动模糊，阳光或店内灯光不均导致轻微曝光过度。角度尴尬、构图混乱，整体呈现出一种刻意的平庸感-就像是从口袋里拿手机时不小心拍到的一张自拍。主角是陈奕迅和谢霆锋，晚上，旁边是香港会展中心，在香港维多利亚港旁边。"
-    
-    # 使用自定义提示词或默认提示词
-    prompt = custom_prompt if custom_prompt else default_prompt
-    
-    # 如果没有上传图片，使用默认图片
-    if not image_urls:
-        image_urls = []
+    prompt = data.get('prompt', '')
 
-    messages = [
-        {
-            "type": "text",
-            "text": prompt
-        }
-    ]
-    
-    for image_url in image_urls:
-        messages.append({
-            "type": "image_url",
-            "image_url": {
-                "url": image_url
-            }
-        })
+    if not activation_code:
+        return jsonify({'error': '请输入激活码'}), 400
 
-    payload = json.dumps({
-        "model": "gpt-4o-image-vip",
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a helpful assistant."
-            },
-            {
-                "role": "user",
-                "content": messages
+    # 验证激活码
+    db = next(get_db())
+    try:
+        code_record = db.query(WechatCode).filter(WechatCode.code == activation_code).with_for_update().first()
+        
+        if not code_record:
+            return jsonify({'error': '激活码不存在'}), 400
+        
+        if code_record.status == 1:
+            return jsonify({'error': '激活码已被使用'}), 400
+        
+        if code_record.status == 2:
+            return jsonify({'error': '激活码正在使用中'}), 400
+
+        # 更新状态为使用中（2）
+        code_record.status = 2
+        db.commit()  # 立即提交事务，确保状态更新到数据库
+        db.flush()  # 刷新到数据库，但不提交事务
+
+        try:
+            # 这里添加你的图片生成逻辑
+            messages = [
+                {
+                    "type": "text",
+                    "text": prompt
+                }
+            ]
+            
+            for image_url in image_urls:
+                messages.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_url
+                    }
+                })
+
+            payload = json.dumps({
+                "model": "gpt-4o-image-vip",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant."
+                    },
+                    {
+                        "role": "user",
+                        "content": messages
+                    }
+                ]
+            })
+            
+            headers = {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': f"Bearer {os.getenv('OPENAI_API_KEY')}"
             }
-        ]
-    })
-    
-    headers = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Authorization': f"Bearer {os.getenv('OPENAI_API_KEY')}"
-    }
-    
-    response = requests.post(os.getenv('OPENAI_API_URL'), headers=headers, data=payload)
-    return jsonify(response.json())
+            print(payload)
+            response = requests.post(os.getenv('OPENAI_API_URL'), headers=headers, data=payload)
+            response_data = response.json()
+            print(response_data)
+
+            # 检查生成是否失败
+            if 'choices' in response_data and response_data['choices']:
+                message_content = response_data['choices'][0]['message']['content']
+                if '生成失败' in message_content or 'is_output_rejection' in message_content:
+                    # 生成失败，重置状态为0
+                    code_record.status = 0
+                    db.commit()  # 立即提交事务，确保状态更新到数据库
+                    db.flush()  # 刷新到数据库，但不提交事务
+                    return jsonify({
+                        'error': '图片生成失败，请修改提示词后重试',
+                        'details': message_content
+                    }), 400
+
+            # 生成完成后更新状态为已使用（1）
+            code_record.status = 1
+            db.commit()  # 立即提交事务，确保状态更新到数据库
+            db.flush()  # 刷新到数据库，但不提交事务
+
+            return jsonify(response_data)
+        except Exception as e:
+            # 发生错误时重置状态为0
+            code_record.status = 0
+            db.commit()  # 立即提交事务，确保状态更新到数据库
+            db.flush()  # 刷新到数据库，但不提交事务
+            raise e
+    except Exception as e:
+        db.rollback()  # 发生错误时回滚事务
+        return jsonify({'error': str(e)}), 500
+    finally:
+        db.commit()  # 立即提交事务，确保状态更新到数据库
+        db.flush()  # 刷新到数据库，但不提交事务
+        db.close()  # 确保关闭数据库连接
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

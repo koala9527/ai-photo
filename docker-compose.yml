@@ -1,17 +1,28 @@
 version: '3.8'
 
 services:
-  web:
+  ai-photo:
     build: .
     ports:
       - "8109:5000"
     volumes:
-      - ./static:/app/static
+      - .:/app
+    environment:
+      - FLASK_ENV=production
     env_file:
       - .env
-    restart: unless-stopped
+    restart: always
+    networks:
+      - app-network
+    dns:
+      - 8.8.8.8
+      - 114.114.114.114
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
       interval: 30s
       timeout: 10s
       retries: 3 
+
+networks:
+  app-network:
+    driver: bridge 

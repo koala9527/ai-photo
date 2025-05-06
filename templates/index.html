@@ -68,6 +68,49 @@
             justify-content: center;
             cursor: pointer;
         }
+        .error-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1001;
+        }
+        .error-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 80%;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+        .error-title {
+            color: #e53e3e;
+            font-size: 1.5em;
+            margin-bottom: 10px;
+        }
+        .error-message {
+            color: #4a5568;
+            margin-bottom: 15px;
+            white-space: pre-wrap;
+        }
+        .error-close {
+            background: #e53e3e;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .error-close:hover {
+            background: #c53030;
+        }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -75,6 +118,30 @@
         <h1 class="text-4xl font-bold text-center mb-8 text-gray-800">AI 图片合成</h1>
         
         <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-6">
+            <div class="mb-6 bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                <div class="flex">
+                    <div class="flex-shrink-0">
+                        <svg class="h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                        </svg>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm text-blue-700">
+                            获取激活码：关注公众号 <span class="font-semibold">AIGC挖掘机</span>，回复 <span class="font-semibold text-red-600">666</span> 即可获取
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-gray-700 text-sm font-bold mb-2">
+                    激活码
+                </label>
+                <input type="text" id="activationCode" 
+                       class="w-full px-3 py-2 text-gray-700 border rounded-lg focus:outline-none focus:border-blue-500"
+                       placeholder="请输入激活码">
+            </div>
+
             <div class="mb-6">
                 <label class="block text-gray-700 text-sm font-bold mb-2">
                     上传图片（最多4张）
@@ -122,6 +189,14 @@
             <h2 class="text-2xl font-bold mb-2">正在生成中...</h2>
             <p class="text-gray-300">预计需要90秒，请耐心等待</p>
             <div id="progressText" class="mt-4 text-gray-300"></div>
+        </div>
+    </div>
+
+    <div id="errorModal" class="error-modal">
+        <div class="error-content">
+            <div class="error-title">错误提示</div>
+            <div id="errorMessage" class="error-message"></div>
+            <button class="error-close" onclick="closeErrorModal()">关闭</button>
         </div>
     </div>
 
@@ -217,7 +292,24 @@
             });
         }
 
+        function showError(message) {
+            const errorModal = document.getElementById('errorModal');
+            const errorMessage = document.getElementById('errorMessage');
+            errorMessage.textContent = message;
+            errorModal.style.display = 'block';
+        }
+
+        function closeErrorModal() {
+            document.getElementById('errorModal').style.display = 'none';
+        }
+
         generateBtn.addEventListener('click', async () => {
+            const activationCode = document.getElementById('activationCode').value.trim();
+            if (!activationCode) {
+                showError('请输入激活码');
+                return;
+            }
+
             loading.style.display = 'block';
             document.getElementById('progressText').textContent = '';
             try {
@@ -228,28 +320,45 @@
                     },
                     body: JSON.stringify({
                         image_urls: uploadedUrls,
-                        prompt: promptInput.value.trim()
+                        prompt: promptInput.value.trim(),
+                        activation_code: activationCode
                     })
                 });
                 const data = await response.json();
-                
+                if (data.error) {
+                    let errorMessage = data.error;
+                    if (data.details) {
+                        errorMessage += '\n\n详细信息：\n' + data.details;
+                    }
+                    showError(errorMessage);
+                    return;
+                }
+                console.log(data);
                 if (data.choices && data.choices[0].message) {
                     const imageUrls = parseMessageContent(data.choices[0].message.content);
                     if (imageUrls.length > 0) {
                         displayResults(imageUrls);
                     } else {
-                        alert('生成失败，未获取到图片');
+                        showError('生成失败，未获取到图片');
                     }
                 } else {
-                    alert('生成失败，请重试');
+                    showError('生成失败，请重试');
                 }
             } catch (error) {
                 console.error('生成失败:', error);
-                alert('生成失败，请重试');
+                showError('生成失败，请重试');
             } finally {
                 loading.style.display = 'none';
             }
         });
+
+        // 点击模态框外部关闭
+        window.onclick = function(event) {
+            const errorModal = document.getElementById('errorModal');
+            if (event.target == errorModal) {
+                closeErrorModal();
+            }
+        }
     </script>
 </body>
 </html>
