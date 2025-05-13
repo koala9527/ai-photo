@@ -8,9 +8,7 @@ import uuid
 from datetime import datetime
 import boto3
 from dotenv import load_dotenv
-from sqlalchemy.orm import Session
-from config.database import get_db
-from app.models import WechatCode
+from app.services.code_service import CodeService
 from app import app
 
 # 加载环境变量
@@ -91,97 +89,71 @@ def generate():
         return jsonify({'error': '请输入激活码'}), 400
 
     # 验证激活码
-    db = next(get_db())
+    is_valid, error_message, code_record = CodeService.validate_code(activation_code)
+    if not is_valid:
+        return jsonify({'error': error_message}), 400
+
     try:
-        code_record = db.query(WechatCode).filter(WechatCode.code == activation_code).with_for_update().first()
-        
-        if not code_record:
-            return jsonify({'error': '激活码不存在'}), 400
-        
-        if code_record.status == 1:
-            return jsonify({'error': '激活码已被使用'}), 400
-        
-        if code_record.status == 2:
-            return jsonify({'error': '激活码正在使用中'}), 400
+        # 标记激活码为使用中
+        CodeService.mark_code_as_using(code_record)
 
-        # 更新状态为使用中（2）
-        code_record.status = 2
-        db.commit()  # 立即提交事务，确保状态更新到数据库
-        db.flush()  # 刷新到数据库，但不提交事务
+        # 图片生成逻辑
+        messages = [
+            {
+                "type": "text",
+                "text": prompt
+            }
+        ]
+        
+        for image_url in image_urls:
+            messages.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": image_url
+                }
+            })
 
-        try:
-            # 这里添加你的图片生成逻辑
-            messages = [
+        payload = json.dumps({
+            "model": "gpt-4o-image-vip",
+            "messages": [
                 {
-                    "type": "text",
-                    "text": prompt
+                    "role": "system",
+                    "content": "You are a helpful assistant."
+                },
+                {
+                    "role": "user",
+                    "content": messages
                 }
             ]
-            
-            for image_url in image_urls:
-                messages.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": image_url
-                    }
-                })
+        })
+        
+        headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Authorization': f"Bearer {os.getenv('OPENAI_API_KEY')}"
+        }
+        
+        response = requests.post(os.getenv('OPENAI_API_URL'), headers=headers, data=payload)
+        response_data = response.json()
 
-            payload = json.dumps({
-                "model": "gpt-4o-image-vip",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant."
-                    },
-                    {
-                        "role": "user",
-                        "content": messages
-                    }
-                ]
-            })
-            
-            headers = {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'Authorization': f"Bearer {os.getenv('OPENAI_API_KEY')}"
-            }
-            print(payload)
-            response = requests.post(os.getenv('OPENAI_API_URL'), headers=headers, data=payload)
-            response_data = response.json()
-            print(response_data)
+        # 检查生成是否失败
+        if 'choices' in response_data and response_data['choices']:
+            message_content = response_data['choices'][0]['message']['content']
+            if '生成失败' in message_content or 'is_output_rejection' in message_content:
+                CodeService.reset_code_status(code_record)
+                return jsonify({
+                    'error': '图片生成失败，请修改提示词后重试',
+                    'details': message_content
+                }), 400
 
-            # 检查生成是否失败
-            if 'choices' in response_data and response_data['choices']:
-                message_content = response_data['choices'][0]['message']['content']
-                if '生成失败' in message_content or 'is_output_rejection' in message_content:
-                    # 生成失败，重置状态为0
-                    code_record.status = 0
-                    db.commit()  # 立即提交事务，确保状态更新到数据库
-                    db.flush()  # 刷新到数据库，但不提交事务
-                    return jsonify({
-                        'error': '图片生成失败，请修改提示词后重试',
-                        'details': message_content
-                    }), 400
+        # 生成成功，标记激活码为已使用
+        CodeService.mark_code_as_used(code_record)
+        return jsonify(response_data)
 
-            # 生成完成后更新状态为已使用（1）
-            code_record.status = 1
-            db.commit()  # 立即提交事务，确保状态更新到数据库
-            db.flush()  # 刷新到数据库，但不提交事务
-
-            return jsonify(response_data)
-        except Exception as e:
-            # 发生错误时重置状态为0
-            code_record.status = 0
-            db.commit()  # 立即提交事务，确保状态更新到数据库
-            db.flush()  # 刷新到数据库，但不提交事务
-            raise e
     except Exception as e:
-        db.rollback()  # 发生错误时回滚事务
+        # 发生错误时重置状态
+        CodeService.reset_code_status(code_record)
         return jsonify({'error': str(e)}), 500
-    finally:
-        db.commit()  # 立即提交事务，确保状态更新到数据库
-        db.flush()  # 刷新到数据库，但不提交事务
-        db.close()  # 确保关闭数据库连接
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
