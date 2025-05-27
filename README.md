@@ -1,6 +1,7 @@
 # AI 图片合成服务
 
 基于 Flask 和 OpenAI API 的 AI 图片合成服务，支持多图片上传和自定义提示词生成。
+![](https://hatui.s3.bitiful.net/wxg%2Fphoto_website_1.png?no-wait=on)
 
 ## 功能特点
 
@@ -119,9 +120,9 @@ docker-compose down
    ```
 3. 服务将在 `http://localhost:8109` 上运行
 
-注意使用OpenAI的文生图ChatGPT4能力，暂时没有官方API 请使用云雾AI :https://yunwu.ai/register?aff=J5qA
-
 ### 注意事项
+使用OpenAI的文生图ChatGPT4能力，暂时没有官方API 请使用云雾AI :https://yunwu.ai/register?aff=J5qA    
+OSS 使用 https://console.bitiful.com/
 
 - 确保 S3 存储桶已正确配置并具有适当的访问权限
 - 生产环境中使用 HTTPS
