@@ -119,6 +119,8 @@ docker-compose down
    ```
 3. 服务将在 `http://localhost:8109` 上运行
 
+注意使用OpenAI的文生图ChatGPT4能力，暂时没有官方API 请使用云雾AI :https://yunwu.ai/register?aff=J5qA
+
 ### 注意事项
 
 - 确保 S3 存储桶已正确配置并具有适当的访问权限
