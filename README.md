@@ -1,7 +1,7 @@
 # AI 图片合成服务
 
 基于 Flask 和 OpenAI API 的 AI 图片合成服务，支持多图片上传和自定义提示词生成。
-![](https://hatui.s3.bitiful.net/wxg%2Fphoto_website_1.png?no-wait=on)
+![](https://hatui.s3.bitiful.net/wxg%2Fphoto_website_2.png?no-wait=on)
 
 ## 功能特点
 
